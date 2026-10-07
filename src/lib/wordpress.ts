@@ -1,4 +1,5 @@
 import { fallbackAcf } from "@/lib/fallback-content";
+import { sanitizeRichHtml } from "@/lib/rich-html";
 
 export const HOME_TAG = "wp-home";
 
@@ -51,6 +52,106 @@ export type ExpertiseContent = {
   cards: ExpertiseCard[];
 };
 
+/** One counting card on a result ("5,364" · "Leads Account total"). */
+export type ResultMetric = { value: string; label: string };
+
+export type ResultCard = {
+  /** URL segment for /results/[slug], derived from the title. */
+  slug: string;
+  title: string;
+  /** Plain-text summary (from `result_card_title_description`). */
+  summary: string;
+  image: WPImage | null;
+  metrics: ResultMetric[];
+  /** Sanitized case-study HTML (from `result_card_long_description_`), only shown on the detail page. */
+  body: string;
+};
+
+export type ResultsContent = {
+  title: string;
+  description: string;
+  cards: ResultCard[];
+};
+
+export type ProductionImage = WPImage & { caption: string };
+
+export type ProductionContent = {
+  title: string;
+  /** Small label from the description's `<span class="eyebrow">`, e.g. "Creative direction & media production". */
+  eyebrow: string;
+  /** Sanitized inline HTML paragraphs. */
+  paragraphs: string[];
+  /** Bullet list from the description, as plain text. */
+  capabilities: string[];
+  images: ProductionImage[];
+};
+
+export type ClientsContent = {
+  title: string;
+  description: string;
+  logos: WPImage[];
+  /** Industry labels from `cleints_work_texts` (sic, as named in ACF). */
+  industries: string[];
+};
+
+export type Testimonial = {
+  quote: string;
+  name: string;
+  role: string;
+  image: WPImage | null;
+};
+
+export type TestimonialsContent = {
+  title: string;
+  description: string;
+  items: Testimonial[];
+};
+
+export type StackContent = {
+  title: string;
+  /** The two disciplines ("Creative & production", "Media & measurement"). */
+  areas: { title: string; description: string }[];
+  tools: { name: string; image: WPImage | null }[];
+};
+
+export type CredentialsContent = {
+  title: string;
+  /** Degrees, diplomas and memberships. */
+  education: { qualification: string; level: string; institute: string }[];
+  /** Certifications and awards with their badge images. */
+  awards: { name: string; issuer: string; image: WPImage | null }[];
+};
+
+export type ProcessContent = {
+  title: string;
+  description: string;
+  steps: { title: string; description: string; image: WPImage | null }[];
+  /** Service names from `process_words`, shown as a scrolling ribbon. */
+  services: string[];
+};
+
+export type ContactKind = "whatsapp" | "email" | "phone" | "linkedin" | "link" | "booking";
+
+export type ContactLink = {
+  kind: ContactKind;
+  label: string;
+  /** Raw value from WordPress, e.g. the number or address (empty for buttons). */
+  value: string;
+  href: string;
+  /** External links open in a new tab. */
+  external: boolean;
+  image: WPImage | null;
+};
+
+export type ContactContent = {
+  title: string;
+  description: string;
+  image: WPImage | null;
+  buttons: ContactLink[];
+  details: ContactLink[];
+  linkedinUrl: string | null;
+};
+
 export type HomeContent = {
   name: string;
   navItems: NavItem[];
@@ -64,6 +165,14 @@ export type HomeContent = {
   stats: StatItem[];
   about: AboutContent | null;
   expertise: ExpertiseContent | null;
+  results: ResultsContent | null;
+  production: ProductionContent | null;
+  clients: ClientsContent | null;
+  testimonials: TestimonialsContent | null;
+  stack: StackContent | null;
+  credentials: CredentialsContent | null;
+  process: ProcessContent | null;
+  contact: ContactContent | null;
   whatsappUrl: string | null;
 };
 
@@ -257,7 +366,278 @@ function toExpertise(acf: Raw): ExpertiseContent | null {
   return { title, description, cards };
 }
 
+const slugify = (s: string) =>
+  s
+    .normalize("NFKD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80)
+    .replace(/-+$/, "");
+
+function toResults(acf: Raw): ResultsContent | null {
+  const title = text(str(acf.result_title));
+  const description = text(str(acf.result_description));
+  const used = new Set<string>();
+
+  const cards = list(acf.result_cards)
+    .map((c, i): ResultCard => {
+      const cardTitle = text(str(c.result_card_title));
+      // Unique, stable slug; falls back to the position if the title is empty.
+      const base = slugify(cardTitle) || `case-${i + 1}`;
+      let slug = base;
+      for (let n = 2; used.has(slug); n++) slug = `${base}-${n}`;
+      used.add(slug);
+
+      return {
+        slug,
+        title: cardTitle,
+        summary: text(str(c.result_card_title_description)),
+        image: toImage(c.result_file),
+        metrics: list(c.result_card_counting_cards)
+          .map((m) => ({
+            value: text(str(m.result_card_counting_card_count)),
+            label: text(str(m.result_card_counting_cards_text)),
+          }))
+          .filter((m) => m.value),
+        body: sanitizeRichHtml(str(c.result_card_long_description_ ?? c.result_card_long_description)),
+      };
+    })
+    .filter((c) => c.title || c.summary || c.metrics.length);
+
+  if (!title && !description && !cards.length) return null;
+  return { title, description, cards };
+}
+
+function toProduction(acf: Raw): ProductionContent | null {
+  const html = str(acf.production_description);
+  const title = text(str(acf.production_title));
+
+  // The eyebrow sits in its own <p><span class="eyebrow">…</span></p>; lift it out of the paragraphs.
+  const eyebrow = text(html.match(byClass("eyebrow", "span"))?.[1] ?? "");
+  const withoutLists = html.replace(/<(ul|ol)\b[\s\S]*?<\/\1>/gi, "");
+  const paragraphs = [...withoutLists.matchAll(/<p[^>]*>([\s\S]*?)<\/p>/gi)]
+    .map((m) => m[1])
+    .filter((inner) => !/class="[^"]*\beyebrow\b/i.test(inner) && text(inner))
+    .map(sanitizeInline);
+  if (!paragraphs.length && !/<p\b/i.test(withoutLists) && text(withoutLists)) {
+    paragraphs.push(sanitizeInline(withoutLists));
+  }
+
+  const capabilities = [...html.matchAll(/<li[^>]*>([\s\S]*?)<\/li>/gi)].map((m) => text(m[1])).filter(Boolean);
+
+  const images = list(acf.production_images)
+    .map((row) => {
+      // The ACF sub-field is spelled "production_imagee" in WordPress.
+      const raw = row.production_imagee ?? row.production_image;
+      const image = toImage(raw);
+      if (!image) return null;
+      const caption = raw && typeof raw === "object" ? text(str((raw as Raw).caption)) : "";
+      return { ...image, caption };
+    })
+    .filter((img): img is ProductionImage => !!img);
+
+  if (!title && !paragraphs.length && !capabilities.length && !images.length) return null;
+  return { title, eyebrow, paragraphs, capabilities, images };
+}
+
+function toClients(acf: Raw): ClientsContent | null {
+  const title = text(str(acf.clients_title));
+  const description = text(str(acf.clients_description));
+  const logos = list(acf.clients_logo)
+    .map((row) => toImage(row.clients_work))
+    .filter((img): img is WPImage => !!img);
+  // ACF field names are misspelled in WordPress ("cleints_work_textt"); accept the corrected spelling too.
+  const industries = list(acf.cleints_work_texts ?? acf.clients_work_texts)
+    .map((row) => text(str(row.cleints_work_textt ?? row.clients_work_text)))
+    .filter(Boolean);
+
+  if (!title && !logos.length && !industries.length) return null;
+  return { title, description, logos, industries };
+}
+
+function toTestimonials(acf: Raw): TestimonialsContent | null {
+  const title = text(str(acf.testimonials_title));
+  const description = text(str(acf.testimonials_description));
+  const items = list(acf.testimonials_cards)
+    .map((card) => ({
+      quote: text(str(card.testimonials_card_description)),
+      name: text(str(card.testimonials_cards_client_title)),
+      role: text(str(card.testimonials_cards_client_sub_title)),
+      image: toImage(card.testimonials_cards_client_image),
+    }))
+    .filter((t) => t.quote);
+
+  if (!items.length) return null;
+  return { title, description, items };
+}
+
+function toStack(acf: Raw): StackContent | null {
+  const title = text(str(acf.stack_title));
+  const areas = list(acf.stack_cards)
+    .map((c) => ({ title: text(str(c.stack_title)), description: text(str(c.stack_description)) }))
+    .filter((a) => a.title || a.description);
+  // The ACF repeater is named "_tools" in WordPress; accept "tools" too.
+  const tools = list(acf._tools ?? acf.tools)
+    .map((t) => ({ name: text(str(t.tool_name)), image: toImage(t.tool_image) }))
+    .filter((t) => t.name || t.image);
+
+  if (!title && !areas.length && !tools.length) return null;
+  return { title, areas, tools };
+}
+
+// Close a dangling "(" left in WordPress, e.g. "AMSLIM (SL" -> "AMSLIM (SL)".
+const balanceParens = (s: string) => {
+  const open = (s.match(/\(/g) ?? []).length - (s.match(/\)/g) ?? []).length;
+  return open > 0 ? s + ")".repeat(open) : s;
+};
+
+function toCredentials(acf: Raw): CredentialsContent | null {
+  const title = text(str(acf.education_title));
+  // Note the ACF naming: "education_institute" holds the qualification, "education_description" the institution.
+  const education = list(acf.education_cards)
+    .map((c) => ({
+      qualification: text(str(c.education_institute)).replace(/[,;:]\s*$/, ""),
+      level: balanceParens(text(str(c.education_level))),
+      institute: text(str(c.education_description)),
+    }))
+    .filter((e) => e.qualification || e.level);
+  const awards = list(acf.license_and_awards)
+    .map((a) => ({
+      name: text(str(a.license_and_awards_name)),
+      issuer: text(str(a.license_and_awards_description)),
+      image: toImage(a.license_and_award_image),
+    }))
+    .filter((a) => a.name || a.image);
+
+  if (!title && !education.length && !awards.length) return null;
+  return { title, education, awards };
+}
+
+function toProcess(acf: Raw): ProcessContent | null {
+  const title = text(str(acf.process_title));
+  const description = text(str(acf.process_description));
+  const steps = list(acf.process_cards)
+    .map((c) => ({
+      title: text(str(c.process_card_title)),
+      description: text(str(c.process_card_description)),
+      image: toImage(c.process_card_image),
+    }))
+    .filter((s) => s.title || s.description);
+  // The ACF sub-field is spelled "process_wordss" in WordPress.
+  const services = list(acf.process_words)
+    .map((w) => text(str(w.process_wordss ?? w.process_word)))
+    .filter(Boolean);
+
+  if (!title && !steps.length && !services.length) return null;
+  return { title, description, steps, services };
+}
+
+/** Country code applied to local WhatsApp numbers that start with 0 (e.g. "077…" in Sri Lanka). */
+const DEFAULT_COUNTRY_CODE = process.env.CONTACT_COUNTRY_CODE ?? "94";
+
+function contactKind(label: string, value = ""): ContactKind {
+  const l = label.toLowerCase();
+  if (/whats\s?app/.test(l)) return "whatsapp";
+  // Matches "LinkedIn", "Linked in" and the "Linkedn" typo used in WordPress.
+  if (/\blink(ed)?\s?i?n\b/.test(l) || /linkedin\.com/i.test(value)) return "linkedin";
+  if (/e-?mail/.test(l) || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) return "email";
+  if (/phone|call me|mobile|tel/.test(l)) return "phone";
+  if (/book|discover|schedul|meeting|call/.test(l)) return "booking";
+  return "link";
+}
+
+// "LinkedIn" is often typed as "Linkedn" in WordPress; show the brand name correctly.
+const tidyLabel = (label: string, kind: ContactKind) =>
+  kind === "linkedin" && /^link(ed)?i?n$/i.test(label.replace(/\s+/g, "")) ? "LinkedIn" : label;
+
+function whatsappHref(value: string) {
+  let digits = value.replace(/[^\d+]/g, "");
+  if (digits.startsWith("+")) digits = digits.slice(1);
+  else if (digits.startsWith("00")) digits = digits.slice(2);
+  else if (digits.startsWith("0")) digits = DEFAULT_COUNTRY_CODE + digits.slice(1);
+  return digits ? `https://wa.me/${digits}` : "";
+}
+
+/** Turns a contact detail ("0778…", "name@…", a LinkedIn handle) into a working link. */
+function detailHref(kind: ContactKind, value: string) {
+  if (/^https?:\/\//i.test(value)) return value;
+  switch (kind) {
+    case "whatsapp":
+      return whatsappHref(value);
+    case "email":
+      return value.includes("@") ? `mailto:${value}` : "";
+    case "phone":
+      return value ? `tel:${value.replace(/[^\d+]/g, "")}` : "";
+    case "linkedin":
+      return value ? `https://www.linkedin.com/in/${value.replace(/^@|^\/?in\//, "")}` : "";
+    default:
+      return "";
+  }
+}
+
+function toContact(acf: Raw): ContactContent | null {
+  const title = text(str(acf.contact_title));
+  const description = text(str(acf.contact_description));
+
+  const details: ContactLink[] = list(acf.contact_details)
+    .map((d) => {
+      const rawLabel = text(str(d.contact_name));
+      const value = text(str(d.contact_detail));
+      const kind = contactKind(rawLabel, value);
+      const href = detailHref(kind, value);
+      return {
+        kind,
+        label: tidyLabel(rawLabel, kind),
+        value,
+        href,
+        external: /^https?:/i.test(href),
+        image: toImage(d.contact_name_image),
+      };
+    })
+    .filter((d) => d.label || d.value);
+
+  const hrefFor = (kind: ContactKind) => details.find((d) => d.kind === kind && d.href)?.href ?? "";
+  const email = details.find((d) => d.kind === "email")?.value ?? "";
+
+  const buttons: ContactLink[] = list(acf.contact_buttons)
+    .map((b) => {
+      const rawLabel = text(str(b.contact_button));
+      const kind = contactKind(rawLabel);
+      // Empty button URLs reuse the matching contact detail; a booking button falls back to email.
+      const href =
+        str(b.contact_button_url).trim() ||
+        (kind === "booking"
+          ? email
+            ? `mailto:${email}?subject=${encodeURIComponent("Discovery call")}`
+            : ""
+          : hrefFor(kind)) ||
+        "#contact";
+      return {
+        kind,
+        label: tidyLabel(rawLabel, kind),
+        value: "",
+        href,
+        external: /^https?:/i.test(href),
+        image: null,
+      };
+    })
+    .filter((b) => b.label);
+
+  if (!title && !description && !details.length && !buttons.length) return null;
+  return {
+    title,
+    description,
+    image: toImage(acf.contact_image),
+    buttons,
+    details,
+    linkedinUrl: hrefFor("linkedin") || buttons.find((b) => b.kind === "linkedin" && b.external)?.href || null,
+  };
+}
+
 export function normalizeHome(acf: Raw): HomeContent {
+  const contact = toContact(acf);
   return {
     name: str(acf.name).trim() || "Sameera Rajapakshe",
     navItems: list(acf.nav_bar)
@@ -275,13 +655,26 @@ export function normalizeHome(acf: Raw): HomeContent {
     primaryCta: { text: str(acf.button_2).trim(), url: url(acf.button_2_url, "#contact") },
     secondaryCta: {
       text: str(acf.button_2_2_hero).trim(),
-      url: url(acf.button_2_2_hero_url, "#highlights"),
+      url: url(acf.button_2_2_hero_url, "#results"),
     },
     education: str(acf.education).trim(),
     stats: toStats(acf),
     about: toAbout(acf),
     expertise: toExpertise(acf),
-    whatsappUrl: str(acf.whatsapp_url).trim() || null,
+    results: toResults(acf),
+    production: toProduction(acf),
+    clients: toClients(acf),
+    testimonials: toTestimonials(acf),
+    stack: toStack(acf),
+    credentials: toCredentials(acf),
+    process: toProcess(acf),
+    contact,
+    // Floating chat button: explicit field first, otherwise the WhatsApp contact detail.
+    whatsappUrl:
+      str(acf.whatsapp_url).trim() ||
+      contact?.details.find((d) => d.kind === "whatsapp")?.href ||
+      contact?.buttons.find((b) => b.kind === "whatsapp")?.href ||
+      null,
   };
 }
 
@@ -316,4 +709,20 @@ export async function getHomePage(): Promise<HomeContent> {
     );
     return normalizeHome(fallbackAcf);
   }
+}
+
+/** A result case plus its neighbours, for /results/[slug]. Null when the slug doesn't exist. */
+export async function getResult(slug: string) {
+  const content = await getHomePage();
+  const cards = content.results?.cards ?? [];
+  const index = cards.findIndex((c) => c.slug === slug);
+  if (index === -1) return null;
+  return {
+    content,
+    card: cards[index],
+    index,
+    total: cards.length,
+    prev: index > 0 ? cards[index - 1] : null,
+    next: index < cards.length - 1 ? cards[index + 1] : null,
+  };
 }

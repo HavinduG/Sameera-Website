@@ -13,6 +13,10 @@ type NavbarProps = {
   navItems: NavItem[];
   buttonText: string;
   buttonUrl: string;
+  /** Forces the active link (e.g. "/#results" on a result detail page) instead of tracking scroll. */
+  activeUrl?: string;
+  /** Where the logo links to: the #home section on the home page, "/" elsewhere. */
+  homeHref?: string;
 };
 
 /**
@@ -42,7 +46,9 @@ function useActiveSection(navItems: NavItem[]) {
       let current: string | null = null;
       for (const el of sections) {
         const rect = el.getBoundingClientRect();
-        if (rect.top <= line && rect.bottom > 0) current = `#${el.id}`;
+        // Last section whose top has passed the line; sections without a nav item (e.g. Production)
+        // keep the previous one active instead of falling back to Home.
+        if (rect.top <= line) current = `#${el.id}`;
       }
       setActive(current ?? fallback);
     };
@@ -63,13 +69,14 @@ function useActiveSection(navItems: NavItem[]) {
   return active;
 }
 
-export function Navbar({ name, navItems, buttonText, buttonUrl }: NavbarProps) {
+export function Navbar({ name, navItems, buttonText, buttonUrl, activeUrl, homeHref = "#home" }: NavbarProps) {
   const { scrollY, scrollYProgress } = useScroll();
   const progress = useSpring(scrollYProgress, { stiffness: 120, damping: 30, mass: 0.3 });
   const [scrolled, setScrolled] = React.useState(false);
 
   useMotionValueEvent(scrollY, "change", (y) => setScrolled(y > 20));
-  const active = useActiveSection(navItems);
+  const tracked = useActiveSection(navItems);
+  const active = activeUrl ?? tracked;
   const [menuOpen, setMenuOpen] = React.useState(false);
   const closeMenu = React.useCallback(() => setMenuOpen(false), []);
   const menuId = React.useId();
@@ -93,7 +100,7 @@ export function Navbar({ name, navItems, buttonText, buttonUrl }: NavbarProps) {
         />
         <div className="mx-auto flex h-24 w-full max-w-[1400px] items-center justify-between px-6 md:px-12 lg:px-20">
           {/* Logo */}
-          <Link href="#home" aria-label="Home" className="shrink-0">
+          <Link href={homeHref} aria-label="Home" className="shrink-0">
             <motion.span
               initial={{ opacity: 0, y: -10 }}
               animate={{ opacity: 1, y: 0 }}
