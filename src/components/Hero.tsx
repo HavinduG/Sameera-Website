@@ -117,7 +117,7 @@ export function Hero({
           >
             <span className="animate-pulse-dot size-2 rounded-full bg-brand" />
             <span className="text-[10px] font-semibold tracking-[0.2em] text-muted-foreground uppercase md:text-[11px]">
-              Full Stack Digital Marketer
+              UAE-BASED DIGITAL MARKETING & GROWTH PROFESSIONAL
             </span>
           </motion.div>
 

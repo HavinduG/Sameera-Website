@@ -20,9 +20,8 @@ export function Footer({ name, role = "Full Stack Digital Marketer", linkedinUrl
     <footer className="mt-8 w-full border-t border-border">
       <div className="mx-auto flex w-full max-w-[1400px] flex-col gap-4 px-6 py-8 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between md:px-12 md:py-10 lg:px-20">
         <p>
-          &copy; {year} {name}
-          {role && <span> &middot; {role}</span>}
-        </p>
+          &copy; {year} {name} Digital Marketing & Growth Professional. All rights reserved.
+       </p>
         <nav aria-label="Footer" className="flex items-center gap-6">
           {linkedinUrl && (
             <a href={linkedinUrl} target="_blank" rel="noopener noreferrer" className={linkClass}>
