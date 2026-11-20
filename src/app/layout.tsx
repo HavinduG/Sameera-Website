@@ -19,7 +19,7 @@ const caveat = Caveat({
 });
 
 export const metadata: Metadata = {
-  title: "Sameera Rajapakshe | Full Stack Digital Marketer",
+  title: "Sameera Rajapakshe | Digital Marketing Strategist UAE",
   description: "Performance marketing portfolio",
 };
 

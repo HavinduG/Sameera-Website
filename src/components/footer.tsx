@@ -13,7 +13,7 @@ const linkClass =
   "relative transition-colors duration-300 hover:text-foreground after:absolute after:inset-x-0 after:-bottom-0.5 after:h-px after:origin-left after:scale-x-0 after:bg-brand after:transition-transform after:duration-300 hover:after:scale-x-100";
 
 /** Site footer: copyright on the left, LinkedIn and "Back to top" on the right. */
-export function Footer({ name, role = "Full Stack Digital Marketer", linkedinUrl, topHref = "#home" }: FooterProps) {
+export function Footer({ name, role = " Digital Marketing Strategist UAE", linkedinUrl, topHref = "#home" }: FooterProps) {
   const year = new Date().getFullYear();
 
   return (

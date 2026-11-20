@@ -21,7 +21,7 @@ import { getHomePage, type NavItem } from "@/lib/wordpress";
 export async function generateMetadata(): Promise<Metadata> {
   const content = await getHomePage();
   return {
-    title: `${content.name} | Full Stack Digital Marketer`,
+    title: `${content.name} | Digital Marketing Strategist UAE`,
     description: content.description,
   };
 }
